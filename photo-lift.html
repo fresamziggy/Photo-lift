@@ -1,0 +1,735 @@
+<title>Photo Lift</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: sticky photo stage with a draggable before/after split, tool panel beside it (stacked on phones), one primary Save action. */
+:root {
+  --bg: #eceff2;
+  --surface: #ffffff;
+  --stage: #dde2e7;
+  --fg: #1a1f25;
+  --muted: #5a6470;
+  --line: #d3d9df;
+  --accent: #b9600c;
+  --accent-soft: #f6e6d4;
+  --accent-fg: #ffffff;
+  --danger: #b3261e;
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+  --font-num: ui-monospace, "SF Mono", Menlo, Consolas, "Roboto Mono", monospace;
+  --radius: 12px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111417; --surface: #1a1e23; --stage: #0a0c0e; --fg: #e7eaee; --muted: #97a1ac;
+    --line: #2a3037; --accent: #f0a042; --accent-soft: #3a2a17; --accent-fg: #1c1206; --danger: #ff8a80;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111417; --surface: #1a1e23; --stage: #0a0c0e; --fg: #e7eaee; --muted: #97a1ac;
+  --line: #2a3037; --accent: #f0a042; --accent-soft: #3a2a17; --accent-fg: #1c1206; --danger: #ff8a80;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { background: var(--bg); color: var(--fg); }
+body { font-family: var(--font-ui); font-size: 15px; line-height: 1.45; }
+.wrap {
+  max-width: 1180px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 12px 32px;
+  display: grid; gap: 14px;
+}
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.brand { display: flex; align-items: baseline; gap: 4px 10px; min-width: 0; flex-wrap: wrap; flex: 1; }
+.brand h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+.brand span { color: var(--muted); font-size: 13px; }
+button, .btn {
+  font: inherit; font-weight: 600; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--fg); padding: 9px 16px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px;
+}
+button:focus-visible, .btn:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button:disabled { opacity: .5; cursor: default; }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.btn-ghost { background: transparent; border-color: transparent; color: var(--muted); padding-inline: 10px; }
+.layout { display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr); align-items: start; }
+@media (min-width: 860px) { .layout { grid-template-columns: minmax(0, 1fr) 340px; } }
+
+/* Stage */
+.stage-col { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; display: grid; gap: 8px; background: var(--bg); padding-block: 4px; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+.stage {
+  background: var(--stage); border-radius: var(--radius); display: grid; place-items: center;
+  padding: 8px; min-height: 160px; overflow: hidden;
+}
+.frame { position: relative; display: inline-block; line-height: 0; touch-action: pan-y; cursor: ew-resize; user-select: none; -webkit-user-select: none; max-width: 100%; }
+.frame canvas { display: block; max-width: 100%; max-height: 36svh; width: auto; height: auto; border-radius: 4px; }
+@media (min-width: 860px) { .frame canvas { max-height: 74svh; } }
+.frame #before { position: absolute; inset: 0; width: 100%; height: 100%; max-height: none; clip-path: inset(0 calc(100% - var(--split, 50%)) 0 0); }
+.divider { position: absolute; top: 0; bottom: 0; left: var(--split, 50%); width: 2px; margin-left: -1px; background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.25); pointer-events: none; }
+.divider::after {
+  content: ""; position: absolute; top: 50%; left: 50%; width: 26px; height: 26px; margin: -13px 0 0 -13px;
+  border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.35);
+}
+.tag { position: absolute; top: 8px; font: 500 11px/1 var(--font-num); letter-spacing: .06em; text-transform: uppercase; color: #fff; background: rgba(0,0,0,.5); padding: 5px 7px; border-radius: 4px; pointer-events: none; }
+.tag.l { left: 8px; } .tag.r { right: 8px; }
+.meta { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+.meta .num { font-family: var(--font-num); font-variant-numeric: tabular-nums; color: var(--fg); }
+.status { font-size: 13px; color: var(--muted); min-height: 1.4em; }
+.status.err { color: var(--danger); }
+.sample-note { font-size: 13px; color: var(--muted); background: var(--accent-soft); padding: 8px 12px; border-radius: 8px; }
+
+/* Panel */
+.panel { display: grid; gap: 12px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; display: grid; gap: 12px; }
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.card-head h2 { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { min-height: 36px; padding: 6px 14px; font-family: var(--font-num); font-weight: 500; font-size: 14px; }
+.chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.size-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; color: var(--muted); }
+.size-row input { width: 96px; font: 500 15px var(--font-num); padding: 7px 9px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+.out { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: 14px; }
+.warn { font-size: 13px; color: var(--accent); }
+.slider { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; align-items: center; }
+.slider label { font-size: 14px; }
+.slider output { font: 500 13px var(--font-num); font-variant-numeric: tabular-nums; color: var(--muted); min-width: 3.5ch; text-align: right; }
+.slider input { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); height: 28px; margin: 0; }
+.save-bar { display: grid; gap: 8px; }
+.save-bar .row { display: flex; gap: 8px; align-items: center; }
+.save-bar select { font: inherit; padding: 9px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); min-height: 44px; }
+.save-bar .btn-primary { flex: 1; min-height: 48px; font-size: 16px; }
+.hint { font-size: 12.5px; color: var(--muted); margin: 0; }
+
+/* Result sheet */
+.sheet { position: fixed; inset: 0; z-index: 20; background: rgba(8,10,12,.72); display: grid; place-items: center;
+  padding: calc(16px + env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) calc(16px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
+.sheet-card { background: var(--surface); color: var(--fg); border-radius: 16px; padding: 16px; width: min(560px, 100%); max-height: 100%; overflow: auto; display: grid; gap: 12px; }
+.sheet-card img { width: 100%; height: auto; max-height: 52svh; object-fit: contain; border-radius: 8px; background: var(--stage); -webkit-touch-callout: default; }
+.sheet-card h3 { margin: 0; font-size: 18px; }
+.sheet-card p { margin: 0; color: var(--muted); font-size: 14px; }
+.sheet-card .row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+@media (prefers-reduced-motion: no-preference) { button { transition: background-color .15s, border-color .15s; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="brand"><h1>Photo Lift</h1><span>Upscale, relight and sharpen on your device</span></div>
+    <label class="btn btn-primary" for="file">Open photo</label>
+    <input id="file" type="file" accept="image/*" hidden>
+  </header>
+
+  <div class="sample-note" id="sample-note">This is a built-in sample. Tap <b>Open photo</b> to use one of yours. Nothing leaves your phone.</div>
+
+  <div class="layout">
+    <section class="stage-col" aria-label="Preview">
+      <div class="stage">
+        <div class="frame" id="frame">
+          <canvas id="after" width="360" height="240" aria-label="Enhanced preview"></canvas>
+          <canvas id="before" width="360" height="240" aria-label="Original"></canvas>
+          <div class="divider"></div>
+          <span class="tag l">Before</span><span class="tag r">After</span>
+        </div>
+      </div>
+      <div class="meta">
+        <span id="name">Sample photo</span>
+        <span>Original <span class="num" id="in-size">–</span></span>
+      </div>
+      <div class="status" id="status" role="status"></div>
+    </section>
+
+    <section class="panel" aria-label="Adjustments">
+      <div class="card">
+        <div class="card-head"><h2>Size</h2></div>
+        <div class="chips" id="scales">
+          <button class="chip" data-scale="1" aria-pressed="false">1×</button>
+          <button class="chip" data-scale="2" aria-pressed="true">2×</button>
+          <button class="chip" data-scale="3" aria-pressed="false">3×</button>
+          <button class="chip" data-scale="4" aria-pressed="false">4×</button>
+        </div>
+        <div class="size-row">
+          <label for="width">Or width</label>
+          <input id="width" type="number" inputmode="numeric" min="16" step="1" placeholder="px">
+          <span>px</span>
+        </div>
+        <div>Saves at <span class="out" id="out-size">–</span></div>
+        <div class="warn" id="cap-warn" hidden></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Light</h2>
+          <div><button class="btn-ghost" id="reset-light">Reset</button><button class="chip" id="auto" aria-pressed="true">Auto</button></div>
+        </div>
+        <div id="light-sliders"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Sharpness</h2><button class="btn-ghost" id="reset-sharp">Reset</button></div>
+        <div id="sharp-sliders"></div>
+      </div>
+
+      <div class="save-bar">
+        <div class="row">
+          <select id="format" aria-label="File type">
+            <option value="image/jpeg">JPEG</option>
+            <option value="image/png">PNG</option>
+          </select>
+          <button class="btn btn-primary" id="save">Save enhanced photo</button>
+        </div>
+        <p class="hint">Drag across the photo to compare before and after. The preview is screen-sized; the saved file is processed at full size.</p>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div class="sheet" id="sheet" hidden>
+  <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+    <h3 id="sheet-title">Your enhanced photo</h3>
+    <img id="result" alt="Enhanced photo">
+    <p id="result-info"></p>
+    <p id="result-tip">On iPhone, press and hold the picture, then choose <b>Save to Photos</b>.</p>
+    <div class="row">
+      <button class="btn" id="done">Done</button>
+      <button class="btn btn-primary" id="save-file" hidden>Save file</button>
+    </div>
+  </div>
+</div>
+
+<script type="text/worker" id="worker-src">
+// All pixel work happens here so the page stays responsive.
+const clamp01 = v => v < 0 ? 0 : v > 1 ? 1 : v;
+
+function histogram(px) {
+  const h = new Uint32Array(256);
+  for (let i = 0; i < px.length; i += 4) h[(px[i] * 54 + px[i + 1] * 183 + px[i + 2] * 19) >> 8]++;
+  return h;
+}
+function percentile(h, total, p) {
+  let acc = 0; const target = total * p;
+  for (let i = 0; i < 256; i++) { acc += h[i]; if (acc >= target) return i; }
+  return 255;
+}
+
+// Suggest lighting settings from the photo's histogram and colour balance.
+function analyze(px, w, h) {
+  const n = w * h, hist = histogram(px);
+  const lo = percentile(hist, n, 0.005), hi = percentile(hist, n, 0.995);
+  const black = Math.min(lo, 40) / 255, white = Math.max(hi, 190) / 255, span = white - black;
+  let r = 0, g = 0, b = 0, bright = 0;
+  for (let i = 0; i < px.length; i += 4) {
+    r += px[i]; g += px[i + 1]; b += px[i + 2];
+    if (px[i] > 248 || px[i + 1] > 248 || px[i + 2] > 248) bright++;
+  }
+  const med = clamp01((percentile(hist, n, 0.5) / 255 - black) / span);
+  const m = Math.min(0.97, Math.max(0.03, med));
+  const gamma = Math.log(0.47) / Math.log(m);
+  const brightness = Math.max(-0.6, Math.min(0.8, -Math.log2(gamma) / 1.2));
+  const p25 = clamp01((percentile(hist, n, 0.25) / 255 - black) / span);
+  const shadows = Math.max(0, Math.min(0.6, (0.24 - p25) * 2.2));
+  const highlights = Math.max(0, Math.min(0.5, (bright / n) * 6));
+  const warmth = Math.max(-0.6, Math.min(0.6, 0.5 * (b - r) / (0.15 * (r + b) || 1)));
+  // Contrast from spread of luma after levels.
+  let mean = 0, sq = 0;
+  for (let i = 0; i < 256; i++) { const v = clamp01((i / 255 - black) / span); mean += v * hist[i]; sq += v * v * hist[i]; }
+  mean /= n; const sd = Math.sqrt(Math.max(0, sq / n - mean * mean));
+  const contrast = Math.max(-0.2, Math.min(0.45, (0.23 - sd) * 2.2));
+  return { black, white, brightness, contrast, shadows, highlights, warmth, vibrance: 0.15 };
+}
+
+function buildLut(p) {
+  const lut = new Float32Array(768);
+  const gamma = Math.pow(2, -p.brightness * 1.2), span = Math.max(0.05, p.white - p.black);
+  for (let c = 0; c < 3; c++) {
+    const gain = c === 0 ? 1 + 0.15 * p.warmth : c === 2 ? 1 - 0.15 * p.warmth : 1;
+    for (let i = 0; i < 256; i++) {
+      let v = clamp01(((i / 255) * gain - p.black) / span);
+      v = Math.pow(v, gamma);
+      if (p.contrast > 0) { const s = v * v * (3 - 2 * v); v += (s - v) * p.contrast; }
+      else if (p.contrast < 0) v += (0.5 - v) * -p.contrast * 0.5;
+      lut[c * 256 + i] = v;
+    }
+  }
+  return lut;
+}
+
+// Levels, brightness, contrast, warmth, local shadows/highlights and vibrance.
+function tone(px, w, h, p) {
+  const lut = buildLut(p);
+  const gw = Math.max(4, Math.round(48 * w / Math.max(w, h))), gh = Math.max(4, Math.round(48 * h / Math.max(w, h)));
+  let grid = new Float32Array(gw * gh); const cnt = new Float32Array(gw * gh);
+  for (let y = 0; y < h; y += 2) {
+    const gy = Math.min(gh - 1, (y * gh / h) | 0);
+    for (let x = 0; x < w; x += 2) {
+      const i = (y * w + x) * 4, gx = Math.min(gw - 1, (x * gw / w) | 0);
+      grid[gy * gw + gx] += 0.2126 * lut[px[i]] + 0.7152 * lut[256 + px[i + 1]] + 0.0722 * lut[512 + px[i + 2]];
+      cnt[gy * gw + gx]++;
+    }
+  }
+  for (let k = 0; k < grid.length; k++) grid[k] = cnt[k] ? grid[k] / cnt[k] : 0.5;
+  for (let pass = 0; pass < 3; pass++) {
+    const out = new Float32Array(grid.length);
+    for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) {
+      let s = 0, c = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const yy = y + dy, xx = x + dx;
+        if (yy >= 0 && yy < gh && xx >= 0 && xx < gw) { s += grid[yy * gw + xx]; c++; }
+      }
+      out[y * gw + x] = s / c;
+    }
+    grid = out;
+  }
+  const sh = p.shadows, hl = p.highlights, vib = p.vibrance;
+  for (let y = 0; y < h; y++) {
+    const fy = Math.max(0, Math.min(gh - 1.001, (y + 0.5) * gh / h - 0.5)), y0 = fy | 0, ty = fy - y0;
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      let r = lut[px[i]], g = lut[256 + px[i + 1]], b = lut[512 + px[i + 2]];
+      if (sh || hl) {
+        const fx = Math.max(0, Math.min(gw - 1.001, (x + 0.5) * gw / w - 0.5)), x0 = fx | 0, tx = fx - x0, k = y0 * gw + x0;
+        const lb = (grid[k] * (1 - tx) + grid[k + 1] * tx) * (1 - ty) + (grid[k + gw] * (1 - tx) + grid[k + gw + 1] * tx) * ty;
+        let m = 1;
+        const ws = Math.max(0, 1 - lb / 0.55); m += sh * 1.6 * ws * ws;
+        const wh = Math.max(0, (lb - 0.45) / 0.55); m *= 1 - hl * 0.5 * wh * wh;
+        r *= m; g *= m; b *= m;
+        const mx = Math.max(r, g, b);
+        if (mx > 1) { const yv = 0.2126 * r + 0.7152 * g + 0.0722 * b; if (yv < 1) { const t = (mx - 1) / (mx - yv); r -= (r - yv) * t; g -= (g - yv) * t; b -= (b - yv) * t; } }
+      }
+      if (vib) {
+        const yv = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        const sat = Math.max(r, g, b) - Math.min(r, g, b);
+        const k = vib > 0 ? 1 + vib * (1 - clamp01(sat)) : 1 + vib;
+        r = yv + (r - yv) * k; g = yv + (g - yv) * k; b = yv + (b - yv) * k;
+      }
+      px[i] = r * 255 + 0.5; px[i + 1] = g * 255 + 0.5; px[i + 2] = b * 255 + 0.5;
+    }
+  }
+}
+
+// Lanczos-3 resampling, one axis at a time.
+function lanczos(x) {
+  if (x === 0) return 1;
+  if (x <= -3 || x >= 3) return 0;
+  const px = Math.PI * x;
+  return 3 * Math.sin(px) * Math.sin(px / 3) / (px * px);
+}
+function weights(srcN, dstN) {
+  const scale = dstN / srcN, f = scale < 1 ? scale : 1, support = 3 / f;
+  const taps = Math.ceil(support) * 2 + 1;
+  const idx = new Int32Array(dstN * taps), wts = new Float32Array(dstN * taps);
+  for (let o = 0; o < dstN; o++) {
+    const center = (o + 0.5) / scale - 0.5, start = Math.floor(center - support) + 1;
+    let sum = 0;
+    for (let t = 0; t < taps; t++) {
+      const j = start + t, wv = lanczos((j - center) * f);
+      idx[o * taps + t] = j < 0 ? 0 : j >= srcN ? srcN - 1 : j;
+      wts[o * taps + t] = wv; sum += wv;
+    }
+    for (let t = 0; t < taps; t++) wts[o * taps + t] /= sum;
+  }
+  return { idx, wts, taps };
+}
+function resize(src, sw, sh, dw, dh, report) {
+  const H = weights(sw, dw), mid = new Uint8ClampedArray(dw * sh * 4);
+  for (let y = 0; y < sh; y++) {
+    const row = y * sw * 4, orow = y * dw * 4;
+    for (let x = 0; x < dw; x++) {
+      let r = 0, g = 0, b = 0; const base = x * H.taps;
+      for (let t = 0; t < H.taps; t++) {
+        const wv = H.wts[base + t]; if (!wv) continue;
+        const s = row + H.idx[base + t] * 4;
+        r += src[s] * wv; g += src[s + 1] * wv; b += src[s + 2] * wv;
+      }
+      const o = orow + x * 4; mid[o] = r + 0.5; mid[o + 1] = g + 0.5; mid[o + 2] = b + 0.5; mid[o + 3] = 255;
+    }
+  }
+  report('Upscaling', 0.5);
+  const V = weights(sh, dh), out = new Uint8ClampedArray(dw * dh * 4), acc = new Float32Array(dw * 3);
+  for (let y = 0; y < dh; y++) {
+    acc.fill(0); const base = y * V.taps;
+    for (let t = 0; t < V.taps; t++) {
+      const wv = V.wts[base + t]; if (!wv) continue;
+      const row = V.idx[base + t] * dw * 4;
+      for (let x = 0, a = 0, s = row; x < dw; x++, a += 3, s += 4) {
+        acc[a] += mid[s] * wv; acc[a + 1] += mid[s + 1] * wv; acc[a + 2] += mid[s + 2] * wv;
+      }
+    }
+    const orow = y * dw * 4;
+    for (let x = 0, a = 0, o = orow; x < dw; x++, a += 3, o += 4) {
+      out[o] = acc[a] + 0.5; out[o + 1] = acc[a + 1] + 0.5; out[o + 2] = acc[a + 2] + 0.5; out[o + 3] = 255;
+    }
+    if ((y & 255) === 0) report('Upscaling', 0.5 + 0.5 * y / dh);
+  }
+  return out;
+}
+
+// Unsharp mask on brightness only, with a soft threshold so flat areas and noise stay calm.
+function sharpen(px, w, h, amount, sigma, noise) {
+  if (amount <= 0) return;
+  sigma = Math.max(0.35, sigma);
+  const rad = Math.ceil(sigma * 3), kern = new Float32Array(rad * 2 + 1);
+  let ks = 0;
+  for (let i = -rad; i <= rad; i++) { kern[i + rad] = Math.exp(-(i * i) / (2 * sigma * sigma)); ks += kern[i + rad]; }
+  for (let i = 0; i < kern.length; i++) kern[i] /= ks;
+  const n = w * h, Y = new Uint16Array(n), T = new Uint16Array(n);
+  for (let k = 0, i = 0; k < n; k++, i += 4) Y[k] = px[i] * 54 + px[i + 1] * 183 + px[i + 2] * 19;
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    for (let x = 0; x < w; x++) {
+      let s = 0;
+      for (let t = -rad; t <= rad; t++) { const xx = x + t < 0 ? 0 : x + t >= w ? w - 1 : x + t; s += Y[row + xx] * kern[t + rad]; }
+      T[row + x] = s;
+    }
+  }
+  const thr = noise * 8 * 256;
+  for (let x = 0; x < w; x++) {
+    for (let y = 0; y < h; y++) {
+      let s = 0;
+      for (let t = -rad; t <= rad; t++) { const yy = y + t < 0 ? 0 : y + t >= h ? h - 1 : y + t; s += T[yy * w + x] * kern[t + rad]; }
+      const k = y * w + x;
+      let d = Y[k] - s;
+      const ad = d < 0 ? -d : d;
+      if (thr > 0 && ad < thr) d *= ad / thr;
+      const delta = amount * d / 256, i = k * 4;
+      px[i] += delta; px[i + 1] += delta; px[i + 2] += delta;
+    }
+  }
+}
+
+self.onmessage = e => {
+  const m = e.data;
+  const report = (label, frac) => self.postMessage({ id: m.id, progress: { label, frac } });
+  try {
+    let px = new Uint8ClampedArray(m.buf);
+    if (m.type === 'analyze') { self.postMessage({ id: m.id, params: analyze(px, m.w, m.h) }); return; }
+    const p = m.params;
+    report('Fixing the light', 0);
+    tone(px, m.w, m.h, p);
+    let w = m.w, h = m.h;
+    if (m.outW !== w || m.outH !== h) { report('Upscaling', 0); px = resize(px, w, h, m.outW, m.outH, report); w = m.outW; h = m.outH; }
+    report('Sharpening', 0);
+    sharpen(px, w, h, p.sharpAmount, p.sharpSigma, p.noise);
+    self.postMessage({ id: m.id, buf: px.buffer, w, h }, [px.buffer]);
+  } catch (err) {
+    self.postMessage({ id: m.id, error: String(err && err.message || err) });
+  }
+};
+</script>
+
+<script>
+(() => {
+  const $ = s => document.querySelector(s);
+  const MAX_PX = 16000000;      // iPhone Safari refuses canvases over about 16.7 megapixels
+  const PREVIEW_MAX = 1100;
+
+  const LIGHT = [
+    ['brightness', 'Brightness', -100, 100],
+    ['contrast', 'Contrast', -100, 100],
+    ['shadows', 'Lift shadows', 0, 100],
+    ['highlights', 'Recover highlights', 0, 100],
+    ['warmth', 'Warmth', -100, 100],
+    ['vibrance', 'Colour', -100, 100],
+  ];
+  const SHARP = [
+    ['sharpAmount', 'Amount', 0, 200, 70],
+    ['sharpSigma', 'Radius', 4, 30, 12],
+    ['noise', 'Protect smooth areas', 0, 100, 25],
+  ];
+  const fmtSigned = v => (v > 0 ? '+' : '') + v;
+  const fmtRadius = v => (v / 10).toFixed(1) + ' px';
+
+  function buildSliders(host, defs, fmt) {
+    for (const [key, label, min, max, def = 0] of defs) {
+      const row = document.createElement('div');
+      row.className = 'slider';
+      row.innerHTML = `<label for="s-${key}">${label}</label><output id="o-${key}"></output>` +
+        `<input type="range" id="s-${key}" min="${min}" max="${max}" step="1" value="${def}" data-default="${def}">`;
+      host.appendChild(row);
+      const input = row.querySelector('input'), out = row.querySelector('output');
+      const show = () => { out.textContent = (fmt[key] || fmtSigned)(+input.value); };
+      input.addEventListener('input', () => {
+        show();
+        if (defs === LIGHT) $('#auto').setAttribute('aria-pressed', 'false');
+        schedulePreview();
+      });
+      input.addEventListener('dblclick', () => { input.value = input.dataset.default; show(); schedulePreview(); });
+      show();
+    }
+  }
+  buildSliders($('#light-sliders'), LIGHT, {});
+  buildSliders($('#sharp-sliders'), SHARP, { sharpSigma: fmtRadius, sharpAmount: v => v + '%', noise: v => v + '%' });
+
+  const val = k => +$('#s-' + k).value;
+  const setVal = (k, v) => { const el = $('#s-' + k); el.value = Math.round(v); el.dispatchEvent(new Event('input')); };
+
+  const state = { src: null, prev: null, name: 'sample', levels: { black: 0, white: 1 }, scale: 2, customW: null, isSample: true };
+
+  function params() {
+    return {
+      black: state.levels.black, white: state.levels.white,
+      brightness: val('brightness') / 100, contrast: val('contrast') / 100, shadows: val('shadows') / 100,
+      highlights: val('highlights') / 100, warmth: val('warmth') / 100, vibrance: val('vibrance') / 100,
+      sharpAmount: val('sharpAmount') / 100, sharpSigma: val('sharpSigma') / 10, noise: val('noise') / 100,
+    };
+  }
+
+  // ---- Worker plumbing ----
+  const workerUrl = URL.createObjectURL(new Blob([$('#worker-src').textContent], { type: 'text/javascript' }));
+  let worker, jobId = 0;
+  const jobs = new Map();
+  function makeWorker() {
+    worker = new Worker(workerUrl);
+    worker.onmessage = e => {
+      const d = e.data, j = jobs.get(d.id);
+      if (!j) return;
+      if (d.progress) { j.onProgress && j.onProgress(d.progress); return; }
+      jobs.delete(d.id);
+      d.error ? j.reject(new Error(d.error)) : j.resolve(d);
+    };
+    worker.onerror = () => {
+      for (const j of jobs.values()) j.reject(new Error('This device ran out of memory. Try a smaller size.'));
+      jobs.clear(); worker.terminate(); makeWorker();
+    };
+  }
+  makeWorker();
+  function runJob(msg, onProgress) {
+    const id = ++jobId;
+    return new Promise((resolve, reject) => {
+      jobs.set(id, { resolve, reject, onProgress });
+      worker.postMessage({ ...msg, id }, [msg.buf]);
+    });
+  }
+
+  // ---- Status ----
+  const statusEl = $('#status');
+  function status(text, isErr) { statusEl.textContent = text || ''; statusEl.classList.toggle('err', !!isErr); }
+  const fmtPx = (w, h) => `${w.toLocaleString()} × ${h.toLocaleString()}`;
+  const mp = (w, h) => (w * h / 1e6).toFixed(1) + ' MP';
+
+  // ---- Output size ----
+  function outputSize() {
+    if (!state.src) return null;
+    const { w, h } = state.src;
+    let ow, oh;
+    if (state.customW) { ow = state.customW; oh = Math.round(h * ow / w); }
+    else { ow = Math.round(w * state.scale); oh = Math.round(h * state.scale); }
+    let capped = false;
+    if (ow * oh > MAX_PX) {
+      const f = Math.sqrt(MAX_PX / (ow * oh));
+      ow = Math.floor(ow * f); oh = Math.floor(oh * f); capped = true;
+    }
+    return { w: Math.max(1, ow), h: Math.max(1, oh), capped };
+  }
+  function updateSize() {
+    const o = outputSize(); if (!o) return;
+    $('#out-size').textContent = `${fmtPx(o.w, o.h)} px · ${mp(o.w, o.h)}`;
+    const warn = $('#cap-warn');
+    warn.hidden = !o.capped;
+    if (o.capped) warn.textContent = 'Reduced to the largest size iPhone browsers can handle (16 MP).';
+    schedulePreview();
+  }
+  $('#scales').addEventListener('click', e => {
+    const b = e.target.closest('[data-scale]'); if (!b) return;
+    state.scale = +b.dataset.scale; state.customW = null; $('#width').value = '';
+    for (const c of document.querySelectorAll('[data-scale]')) c.setAttribute('aria-pressed', String(c === b));
+    updateSize();
+  });
+  $('#width').addEventListener('input', e => {
+    const v = parseInt(e.target.value, 10);
+    state.customW = v >= 16 ? v : null;
+    for (const c of document.querySelectorAll('[data-scale]')) c.setAttribute('aria-pressed', String(!state.customW && +c.dataset.scale === state.scale));
+    updateSize();
+  });
+
+  // ---- Preview rendering ----
+  const afterC = $('#after'), beforeC = $('#before');
+  let previewBusy = false, previewDirty = false;
+  function schedulePreview() {
+    if (!state.prev) return;
+    if (previewBusy) { previewDirty = true; return; }
+    previewBusy = true; previewDirty = false;
+    requestAnimationFrame(async () => {
+      const p = params(), o = outputSize();
+      // Sharpening radius is in output pixels; shrink it to match the preview scale.
+      const ratio = state.prev.w / o.w;
+      p.sharpSigma = Math.max(0.5, p.sharpSigma * Math.min(1, ratio * 1.6));
+      try {
+        const r = await runJob({ type: 'preview', buf: state.prev.data.slice().buffer, w: state.prev.w, h: state.prev.h, outW: state.prev.w, outH: state.prev.h, params: p });
+        afterC.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(r.buf), r.w, r.h), 0, 0);
+      } catch (err) { status(err.message, true); }
+      previewBusy = false;
+      if (previewDirty) schedulePreview();
+    });
+  }
+
+  async function autoLight() {
+    const r = await runJob({ type: 'analyze', buf: state.prev.data.slice().buffer, w: state.prev.w, h: state.prev.h });
+    const p = r.params;
+    state.levels = { black: p.black, white: p.white };
+    for (const k of ['brightness', 'contrast', 'shadows', 'highlights', 'warmth', 'vibrance']) setVal(k, p[k] * 100);
+    $('#auto').setAttribute('aria-pressed', 'true');
+  }
+  $('#auto').addEventListener('click', () => state.prev && autoLight());
+  $('#reset-light').addEventListener('click', () => {
+    state.levels = { black: 0, white: 1 };
+    for (const [k] of LIGHT) setVal(k, 0);
+    $('#auto').setAttribute('aria-pressed', 'false');
+  });
+  $('#reset-sharp').addEventListener('click', () => { for (const [k, , , , d] of SHARP) setVal(k, d); });
+
+  // ---- Loading images ----
+  function grab(img, w, h) {
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, 0, 0, w, h);
+    const d = ctx.getImageData(0, 0, w, h);
+    c.width = c.height = 0;
+    return { data: d.data, w, h };
+  }
+  async function loadImage(img, name, isSample) {
+    const nw = img.naturalWidth, nh = img.naturalHeight;
+    const f = Math.min(1, Math.sqrt(MAX_PX / (nw * nh)));
+    state.src = grab(img, Math.round(nw * f), Math.round(nh * f));
+    const pf = Math.min(1, PREVIEW_MAX / Math.max(nw, nh));
+    state.prev = grab(img, Math.max(1, Math.round(nw * pf)), Math.max(1, Math.round(nh * pf)));
+    state.name = name; state.isSample = isSample;
+    for (const c of [afterC, beforeC]) { c.width = state.prev.w; c.height = state.prev.h; }
+    beforeC.getContext('2d').putImageData(new ImageData(state.prev.data.slice(), state.prev.w, state.prev.h), 0, 0);
+    $('#name').textContent = isSample ? 'Sample photo' : name;
+    $('#in-size').textContent = `${fmtPx(nw, nh)} px`;
+    $('#sample-note').hidden = !isSample;
+    status(f < 1 ? 'This photo is very large, so it was reduced to 16 MP to fit iPhone limits.' : '');
+    updateSize();
+    await autoLight();
+  }
+
+  $('#file').addEventListener('change', e => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file), img = new Image();
+    status('Opening ' + file.name + '…');
+    img.onload = () => { loadImage(img, file.name.replace(/\.[^.]+$/, ''), false).catch(err => status(err.message, true)); URL.revokeObjectURL(url); };
+    img.onerror = () => { status('That file could not be opened as a picture. Try a JPEG, PNG or HEIC photo.', true); URL.revokeObjectURL(url); };
+    img.src = url;
+    e.target.value = '';
+  });
+
+  // A small, dim, slightly soft landscape so the tools have something to show on first open.
+  function makeSample() {
+    const W = 720, H = 480, c = document.createElement('canvas'); c.width = W; c.height = H;
+    const x = c.getContext('2d');
+    let g = x.createLinearGradient(0, 0, 0, H * 0.6);
+    g.addColorStop(0, '#6f93b8'); g.addColorStop(1, '#f1c992');
+    x.fillStyle = g; x.fillRect(0, 0, W, H);
+    x.fillStyle = '#fff3d6'; x.beginPath(); x.arc(520, 210, 34, 0, 7); x.fill();
+    const ridge = (base, amp, col, seed) => {
+      x.fillStyle = col; x.beginPath(); x.moveTo(0, H);
+      for (let i = 0; i <= W; i += 8) x.lineTo(i, base - amp * (Math.sin(i / 70 + seed) * 0.6 + Math.sin(i / 23 + seed * 2) * 0.25));
+      x.lineTo(W, H); x.fill();
+    };
+    ridge(250, 50, '#7c8aa0', 1); ridge(290, 36, '#566a5c', 3);
+    g = x.createLinearGradient(0, 300, 0, H); g.addColorStop(0, '#89a6bf'); g.addColorStop(1, '#3d5468');
+    x.fillStyle = g; x.fillRect(0, 312, W, H);
+    ridge(330, 10, '#3f5a3c', 5);
+    for (let i = 0; i < 26; i++) {
+      const tx = 10 + i * 27 + (i % 3) * 5, th = 40 + (i * 37 % 30);
+      x.fillStyle = i % 2 ? '#2e4a32' : '#365a3a';
+      x.beginPath(); x.moveTo(tx, 335 - th); x.lineTo(tx - 11, 338); x.lineTo(tx + 11, 338); x.fill();
+    }
+    x.fillStyle = '#9b4a32'; x.fillRect(200, 300, 70, 38);
+    x.fillStyle = '#5b2c22'; x.beginPath(); x.moveTo(192, 302); x.lineTo(235, 276); x.lineTo(278, 302); x.fill();
+    x.fillStyle = '#f7d27a'; x.fillRect(214, 312, 12, 12); x.fillRect(244, 312, 12, 12);
+    x.globalCompositeOperation = 'multiply'; x.fillStyle = '#77736c'; x.fillRect(0, 0, W, H);
+    x.globalCompositeOperation = 'source-over'; x.fillStyle = 'rgba(96,98,104,0.22)'; x.fillRect(0, 0, W, H);
+    const s = document.createElement('canvas'); s.width = 420; s.height = 280;
+    s.getContext('2d').drawImage(c, 0, 0, 420, 280);
+    const img = new Image();
+    img.onload = () => loadImage(img, 'sample', true);
+    img.src = s.toDataURL('image/jpeg', 0.8);
+  }
+
+  // ---- Before/after split ----
+  const frame = $('#frame');
+  function setSplit(clientX) {
+    const r = frame.getBoundingClientRect();
+    const pct = Math.max(0, Math.min(100, (clientX - r.left) / r.width * 100));
+    frame.style.setProperty('--split', pct + '%');
+  }
+  let dragging = false;
+  frame.addEventListener('pointerdown', e => { dragging = true; setSplit(e.clientX); });
+  window.addEventListener('pointermove', e => { if (dragging) setSplit(e.clientX); });
+  window.addEventListener('pointerup', () => { dragging = false; });
+  window.addEventListener('pointercancel', () => { dragging = false; });
+
+  // ---- Saving ----
+  let downloads = null;
+  (async () => {
+    try { if (window.claude && window.claude.use) downloads = await window.claude.use('downloads'); } catch (_) {}
+  })();
+  const inFrame = (() => { try { return window.self !== window.top; } catch (_) { return true; } })();
+  const canShareFile = blob => {
+    try { return !inFrame && !!navigator.canShare && navigator.canShare({ files: [new File([blob], 'x.jpg', { type: blob.type })] }); }
+    catch (_) { return false; }
+  };
+  // Offline support when installed from its own website (not available inside claude.ai).
+  if ('serviceWorker' in navigator && !inFrame && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+  let lastBlob = null, lastName = '', lastUrl = null;
+
+  $('#save').addEventListener('click', async () => {
+    if (!state.src) return;
+    const o = outputSize(), type = $('#format').value;
+    const btn = $('#save'); btn.disabled = true;
+    const t0 = performance.now();
+    try {
+      status(`Processing at ${fmtPx(o.w, o.h)} px…`);
+      const r = await runJob(
+        { type: 'full', buf: state.src.data.slice().buffer, w: state.src.w, h: state.src.h, outW: o.w, outH: o.h, params: params() },
+        pr => status(`${pr.label}… ${Math.round(pr.frac * 100)}%`)
+      );
+      status('Encoding the file…');
+      const c = document.createElement('canvas'); c.width = r.w; c.height = r.h;
+      c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(r.buf), r.w, r.h), 0, 0);
+      const blob = await new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('This device could not encode an image that large. Try a smaller size.')), type, 0.92));
+      c.width = c.height = 0;
+      const ext = type === 'image/png' ? 'png' : 'jpg';
+      const tag = state.customW ? `${r.w}w` : `${state.scale}x`;
+      lastBlob = blob; lastName = `${state.isSample ? 'photo-lift-sample' : state.name}-enhanced-${tag}.${ext}`;
+      if (lastUrl) URL.revokeObjectURL(lastUrl);
+      lastUrl = URL.createObjectURL(blob);
+      $('#result').src = lastUrl;
+      $('#result-info').textContent = `${fmtPx(r.w, r.h)} px · ${blob.size < 1e6 ? Math.max(1, Math.round(blob.size / 1e3)) + ' KB' : (blob.size / 1e6).toFixed(1) + ' MB'} ${ext.toUpperCase()} · done in ${((performance.now() - t0) / 1000).toFixed(1)} s`;
+      $('#save-file').hidden = !(downloads || canShareFile(blob) || !inFrame);
+      if (canShareFile(blob)) $('#result-tip').innerHTML = 'Tap <b>Save file</b> and choose <b>Save Image</b> to put it in Photos.';
+      $('#sheet').hidden = false;
+      status('');
+    } catch (err) {
+      status(err.message, true);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  $('#save-file').addEventListener('click', async () => {
+    if (!lastBlob) return;
+    const file = new File([lastBlob], lastName, { type: lastBlob.type });
+    if (!downloads && canShareFile(lastBlob)) {
+      // iPhone share sheet: "Save Image" puts it straight into Photos.
+      try { await navigator.share({ files: [file] }); } catch (_) {}
+      return;
+    }
+    if (downloads) {
+      try { await downloads.save({ filename: lastName, data: lastBlob }); }
+      catch (err) { if (err && err.code !== 'declined') $('#result-tip').textContent = 'Saving a file is not available here. Press and hold the picture to save it instead.'; }
+    } else {
+      const a = document.createElement('a'); a.href = lastUrl; a.download = lastName; document.body.appendChild(a); a.click(); a.remove();
+    }
+  });
+  $('#done').addEventListener('click', () => { $('#sheet').hidden = true; });
+  $('#sheet').addEventListener('click', e => { if (e.target.id === 'sheet') $('#sheet').hidden = true; });
+
+  makeSample();
+})();
+</script>
