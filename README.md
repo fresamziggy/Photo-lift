@@ -2,7 +2,7 @@
 
 Upscale, relight and sharpen photos entirely on your device. Nothing is uploaded, and it works offline once installed.
 
-**Open the app:** https://fresamziggy.github.io/photo-lift/
+**Open the app:** https://fresamziggy.github.io/Photo-lift/
 
 ## Install on iPhone
 1. Open the link above in Safari.
